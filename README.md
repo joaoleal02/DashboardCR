@@ -6,11 +6,7 @@ Phase 1 prototype of a local Streamlit app that generates a Monday morning equit
 
 The app collects public information about a selected company, combines company and market data with recent news, and sends the result to an LLM to produce a concise buy-side style briefing.
 
-This repository intentionally solves **Phase 1 only**.
-
 ## Phase 1 scope
-
-Implemented in this prototype:
 
 - one-ticker briefing flow
 - restricted ticker universe
@@ -20,17 +16,6 @@ Implemented in this prototype:
 - up to 5 recent news items
 - LLM-generated structured analysis
 - minimal Streamlit interface
-
-Intentionally not implemented yet:
-
-- databases or persistence
-- historical snapshots or execution history
-- recurring pipelines
-- generalized support for all B3 tickers
-- advanced orchestration or fault tolerance
-- background jobs
-- RAG, embeddings, vector stores, or retrieval systems
-- production architecture or infrastructure
 
 ## Supported tickers
 
@@ -112,30 +97,6 @@ streamlit run app.py
   - fundamentals interpretation
   - news synthesis
   - three analyst questions
-
-The runtime data flow is API/CSV based only. The app does not depend on HTML scraping.
-
-## Known Phase 1 limitations
-
-These limitations are intentional and acceptable for this prototype:
-
-- restricted ticker list
-- dependence on public/free sources that may occasionally return missing fields
-- best-effort extraction of company metadata
-- limited malformed-output handling for the LLM response
-- no persistence or historical tracking
-- no guarantee of production-grade availability or robustness
-
-## Deferred to Phase 2
-
-Examples of work intentionally left for later:
-
-- persistent storage of briefings
-- execution history and historical comparisons
-- broader ticker coverage
-- stronger resilience and retries
-- richer validation and monitoring
-- deeper analyst workflows or recurring automation
 
 ## Notes for evaluators
 
