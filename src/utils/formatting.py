@@ -61,5 +61,12 @@ def normalize_title_key(value: str) -> str:
     return " ".join(value.lower().split())
 
 
+def escape_streamlit_text(value: Any) -> str:
+    text = safe_text(value)
+    if text == "Unavailable":
+        return text
+    return text.replace("\\", "\\\\").replace("$", "\\$")
+
+
 def to_pretty_json(value: Any) -> str:
     return json.dumps(value, indent=2, ensure_ascii=False, default=str)

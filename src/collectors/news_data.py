@@ -6,10 +6,8 @@ from typing import Any
 from xml.etree import ElementTree
 
 import requests
-import yfinance as yf
 
 from src.config import get_settings
-from src.utils.validation import to_yahoo_symbol
 
 
 class NewsDataCollector:
@@ -19,42 +17,7 @@ class NewsDataCollector:
         self.settings = get_settings()
 
     def collect(self, ticker: str, company_name: str | None = None) -> list[dict[str, Any]]:
-        items = self._fetch_yahoo_news(ticker)
-        if len(items) < 5:
-            fallback_items = self._fetch_google_news_rss(ticker=ticker, company_name=company_name)
-            items = self._merge_unique_news(items + fallback_items)
-        return items[:5]
-
-    def _fetch_yahoo_news(self, ticker: str) -> list[dict[str, Any]]:
-        try:
-            symbol = to_yahoo_symbol(ticker)
-            news = yf.Ticker(symbol).news or []
-        except Exception:
-            return []
-
-        parsed_items: list[dict[str, Any]] = []
-        for item in news:
-            content = item.get("content") or {}
-            title = item.get("title") or content.get("title")
-            source = item.get("publisher")
-            if not source:
-                provider = content.get("provider") or {}
-                source = provider.get("displayName")
-            publish_ts = item.get("providerPublishTime") or content.get("pubDate")
-            link = (
-                item.get("link")
-                or content.get("clickThroughUrl", {}).get("url")
-                or content.get("canonicalUrl", {}).get("url")
-            )
-            parsed_items.append(
-                {
-                    "title": title,
-                    "source": source,
-                    "date": self._coerce_datetime(publish_ts),
-                    "url": link,
-                }
-            )
-        return self._merge_unique_news(parsed_items)
+        return self._fetch_google_news_rss(ticker=ticker, company_name=company_name)[:5]
 
     def _fetch_google_news_rss(self, ticker: str, company_name: str | None = None) -> list[dict[str, Any]]:
         query = " ".join(part for part in [ticker, company_name, "B3"] if part)

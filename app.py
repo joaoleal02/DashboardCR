@@ -9,6 +9,7 @@ from src.services.briefing_service import BriefingService
 from src.ticker_universe import ALLOWED_TICKERS
 from src.utils.formatting import (
     compact_date,
+    escape_streamlit_text,
     format_metric_value,
     normalize_title_key,
     safe_text,
@@ -148,7 +149,7 @@ def render_news(news_items: list[dict[str, object]], llm_report: object | None) 
         st.markdown(f"**{title}**")
         meta_parts = [part for part in [source, date_value] if part != "Unavailable"]
         if sentiment:
-            meta_parts.append(f"Sentiment: {sentiment}")
+            meta_parts.append(f"Impact: {sentiment}")
         if meta_parts:
             st.caption(" | ".join(meta_parts))
         if url:
@@ -163,17 +164,17 @@ def render_llm_report(llm_report: object | None, llm_error: str | None) -> None:
         return
 
     st.markdown("**Business summary**")
-    st.write(llm_report.business_summary)
+    st.markdown(escape_streamlit_text(llm_report.business_summary))
 
     st.markdown("**Interpretation of indicators**")
-    st.write(llm_report.fundamentals_interpretation)
+    st.markdown(escape_streamlit_text(llm_report.fundamentals_interpretation))
 
     st.markdown("**News synthesis**")
-    st.write(llm_report.news_analysis.overall)
+    st.markdown(escape_streamlit_text(llm_report.news_analysis.overall))
 
     st.markdown("**Analyst questions**")
     for question in llm_report.analyst_questions:
-        st.write(f"- {question}")
+        st.markdown(f"- {escape_streamlit_text(question)}")
 
 
 def main() -> None:

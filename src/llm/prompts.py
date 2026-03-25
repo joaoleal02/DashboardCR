@@ -58,6 +58,8 @@ def build_user_prompt(payload: dict[str, Any]) -> str:
             "net_debt_ebitda": format_metric_value("net_debt_ebitda", market.get("net_debt_ebitda")),
             "net_margin": format_metric_value("net_margin", market.get("net_margin")),
             "dividend_yield": format_metric_value("dividend_yield", market.get("dividend_yield")),
+            "net_debt": market.get("net_debt"),
+            "ebitda": market.get("ebitda"),
         },
         "recent_news": [
             {

@@ -59,6 +59,7 @@ project_root/
     ticker_universe.py
     collectors/
       __init__.py
+      public_api.py
       company_data.py
       market_data.py
       news_data.py
@@ -102,14 +103,17 @@ streamlit run app.py
 
 ## How it works
 
-- `yfinance` is used for quote, business summary, and first-pass company/news metadata.
-- Fundamentus is used as a best-effort public fallback for Brazilian fundamentals and sector/subsector classification.
-- Google News RSS is used as a simple public fallback when Yahoo news is unavailable or too sparse.
+- The B3 listed-companies JSON endpoint is used to resolve company name, CVM code, and B3 segment.
+- CVM open-data files are used for sector, business description, shares outstanding, and accounting-based fundamentals.
+- Status Invest JSON endpoints are used for current price, price history, and provents-based dividend inputs.
+- Google News RSS is used to collect up to five recent public news items.
 - The LLM receives a structured payload and returns JSON with:
   - business summary
   - fundamentals interpretation
   - news synthesis
   - three analyst questions
+
+The runtime data flow is API/CSV based only. The app does not depend on HTML scraping.
 
 ## Known Phase 1 limitations
 
