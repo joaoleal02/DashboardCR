@@ -16,6 +16,7 @@ Implemented in this prototype:
 - restricted ticker universe
 - company overview from public sources
 - current quote and selected fundamentals
+- simple returns chart with switchable windows
 - up to 5 recent news items
 - LLM-generated structured analysis
 - minimal Streamlit interface
@@ -88,7 +89,7 @@ pip install -r requirements.txt
 
 ```bash
 OPENAI_API_KEY=your_api_key_here
-OPENAI_MODEL=gpt-4.1-mini
+OPENAI_MODEL=gpt-5.4-mini
 ```
 
 `OPENAI_BASE_URL` is optional if you want to point the app to another OpenAI-compatible endpoint.

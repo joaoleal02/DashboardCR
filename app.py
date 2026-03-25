@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime
+
+import pandas as pd
 import streamlit as st
 
 from src.services.briefing_service import BriefingService
@@ -48,6 +51,81 @@ def render_market_data(market_data: dict[str, object]) -> None:
         column = cols[index % 3]
         with column:
             st.metric(label=label, value=format_metric_value(field, market_data.get(field)))
+
+
+def render_returns_chart(price_history: list[dict[str, object]], ticker: str) -> None:
+    st.markdown("**Returns chart**")
+    if not price_history:
+        st.info("Historical price data is unavailable for this ticker at the moment.")
+        return
+
+    history_frame = pd.DataFrame(price_history)
+    if history_frame.empty or "date" not in history_frame or "close" not in history_frame:
+        st.info("Historical price data is unavailable for this ticker at the moment.")
+        return
+
+    history_frame["date"] = pd.to_datetime(history_frame["date"], errors="coerce")
+    history_frame["close"] = pd.to_numeric(history_frame["close"], errors="coerce")
+    history_frame = history_frame.dropna(subset=["date", "close"]).sort_values("date")
+    if history_frame.empty:
+        st.info("Historical price data is unavailable for this ticker at the moment.")
+        return
+
+    selected_window = st.radio(
+        "Window",
+        options=["12M", "6M", "YTD", "MTD"],
+        horizontal=True,
+        key=f"returns-window-{ticker}",
+    )
+    filtered_frame = filter_price_history(history_frame, selected_window)
+    if filtered_frame.empty:
+        st.info(f"No historical points are available for the selected {selected_window} window.")
+        return
+
+    base_close = filtered_frame["close"].iloc[0]
+    if base_close <= 0:
+        st.info("Historical price data is unavailable for return normalization.")
+        return
+    filtered_frame["Return (%)"] = ((filtered_frame["close"] / base_close) - 1) * 100
+    chart_frame = filtered_frame.set_index("date")[["Return (%)"]]
+
+    latest_return = chart_frame["Return (%)"].iloc[-1]
+    st.caption(f"Cumulative return for {selected_window}: {latest_return:.2f}%")
+    st.line_chart(chart_frame, height=260)
+
+
+def get_result_price_history(result: object) -> list[dict[str, object]]:
+    direct_history = getattr(result, "price_history", None)
+    if isinstance(direct_history, list):
+        return direct_history
+
+    raw_payload = getattr(result, "raw_payload", None)
+    if isinstance(raw_payload, dict):
+        payload_history = raw_payload.get("price_history")
+        if isinstance(payload_history, list):
+            return payload_history
+
+    return []
+
+
+def filter_price_history(history_frame: pd.DataFrame, window: str) -> pd.DataFrame:
+    latest_date = history_frame["date"].max()
+    if pd.isna(latest_date):
+        return history_frame.iloc[0:0]
+
+    if window == "12M":
+        start_date = latest_date - pd.DateOffset(months=12)
+    elif window == "6M":
+        start_date = latest_date - pd.DateOffset(months=6)
+    elif window == "YTD":
+        start_date = pd.Timestamp(datetime(latest_date.year, 1, 1))
+    else:
+        start_date = pd.Timestamp(datetime(latest_date.year, latest_date.month, 1))
+
+    filtered = history_frame.loc[history_frame["date"] >= start_date].copy()
+    if filtered.empty:
+        return history_frame.copy()
+    return filtered
 
 
 def render_news(news_items: list[dict[str, object]], llm_report: object | None) -> None:
@@ -137,6 +215,7 @@ def main() -> None:
 
     render_overview(result.company_profile, result.ticker)
     render_market_data(result.market_data)
+    render_returns_chart(get_result_price_history(result), result.ticker)
     render_news(result.news, result.llm_report)
     render_llm_report(result.llm_report, result.llm_error)
 

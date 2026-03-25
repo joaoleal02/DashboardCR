@@ -15,6 +15,7 @@ class BriefingResult:
     ticker: str
     company_profile: dict[str, Any]
     market_data: dict[str, Any]
+    price_history: list[dict[str, Any]]
     news: list[dict[str, Any]]
     llm_report: LLMReport | None
     llm_error: str | None
@@ -47,14 +48,16 @@ class BriefingService:
         market_data = {
             key: value
             for key, value in market_payload.items()
-            if not key.startswith("_")
+            if not key.startswith("_") and key != "price_history"
         }
+        price_history = market_payload.get("price_history", [])
         raw_payload = {
             "ticker": ticker,
             "company_profile": {
                 key: value for key, value in company_profile.items() if not key.startswith("_")
             },
             "market_data": market_data,
+            "price_history": price_history,
             "news": news,
         }
 
@@ -73,6 +76,7 @@ class BriefingService:
             "market_sources": market_payload.get("_sources", []),
             "llm_configured": self.llm_client.is_configured(),
             "news_count": len(news),
+            "price_history_points": len(price_history),
             "llm_raw_response": llm_raw_response,
         }
 
@@ -80,6 +84,7 @@ class BriefingService:
             ticker=ticker,
             company_profile=raw_payload["company_profile"],
             market_data=market_data,
+            price_history=price_history,
             news=news,
             llm_report=llm_report,
             llm_error=llm_error,

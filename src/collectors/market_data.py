@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 import re
 import unicodedata
 from typing import Any
@@ -36,6 +37,7 @@ class MarketDataCollector:
     def collect(self, ticker: str) -> dict[str, Any]:
         yahoo_symbol = to_yahoo_symbol(ticker)
         quote = self._fetch_quote(yahoo_symbol)
+        price_history = self._fetch_price_history(yahoo_symbol)
         fundamentus_values = self._fetch_fundamentus_snapshot(ticker)
 
         return {
@@ -45,6 +47,7 @@ class MarketDataCollector:
             "net_debt_ebitda": fundamentus_values.get("net_debt_ebitda"),
             "net_margin": fundamentus_values.get("net_margin"),
             "dividend_yield": fundamentus_values.get("dividend_yield"),
+            "price_history": price_history,
             "_profile_fallbacks": {
                 "company_name": fundamentus_values.get("company_name"),
                 "sector": fundamentus_values.get("sector"),
@@ -69,6 +72,29 @@ class MarketDataCollector:
         except Exception:
             return None
         return None
+
+    def _fetch_price_history(self, yahoo_symbol: str) -> list[dict[str, Any]]:
+        try:
+            history = yf.Ticker(yahoo_symbol).history(period="1y", interval="1d", auto_adjust=False)
+        except Exception:
+            return []
+
+        if history.empty or "Close" not in history:
+            return []
+
+        points: list[dict[str, Any]] = []
+        for index, row in history.iterrows():
+            close = row.get("Close")
+            if close is None:
+                continue
+            trade_date = index.date() if hasattr(index, "date") else date.fromisoformat(str(index)[:10])
+            points.append(
+                {
+                    "date": trade_date.isoformat(),
+                    "close": float(close),
+                }
+            )
+        return points
 
     def _fetch_fundamentus_snapshot(self, ticker: str) -> dict[str, Any]:
         try:
