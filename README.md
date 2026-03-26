@@ -1,6 +1,6 @@
-# Monday Morning Equity Briefing
+# Equity Research Briefing
 
-Phase 1 prototype of a local Streamlit app that generates a Monday morning equity research briefing for one allowed B3 ticker at a time.
+Phase 1 prototype of a local Streamlit app that generates an equity research briefing for one allowed B3 ticker at a time.
 
 ## Purpose
 
@@ -89,7 +89,8 @@ streamlit run app.py
 ## How it works
 
 - The B3 listed-companies JSON endpoint is used to resolve company name, CVM code, and B3 segment.
-- CVM open-data files are used for sector, business description, shares outstanding, and accounting-based fundamentals.
+- Yahoo Finance is used as the first source for fundamentals such as P/L, ROE, Net Margin, Dividend Yield, EBITDA, and Net Debt.
+- CVM open-data files are used for sector, business description, shares outstanding, and fallback accounting-based fundamentals.
 - Status Invest JSON endpoints are used for current price, price history, and provents-based dividend inputs.
 - Google News RSS is used to collect up to five recent public news items.
 - The LLM receives a structured payload and returns JSON with:
@@ -101,5 +102,5 @@ streamlit run app.py
 ## Notes for evaluators
 
 - If some data points are unavailable from the public sources, the app shows `Unavailable` instead of failing.
-- If the LLM call fails, the app still renders the raw collected data so the pipeline remains explainable.
+- If the LLM call fails, the app still renders the company, market, and news sections so the briefing remains usable.
 - The design is intentionally small and pragmatic so it is easy to run locally and easy to explain in an interview.

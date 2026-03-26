@@ -76,13 +76,15 @@ class PublicDataAPI:
             "dividend_yield": annual_fundamentals.get("dividend_yield"),
             "net_debt": annual_fundamentals.get("net_debt"),
             "ebitda": annual_fundamentals.get("ebitda"),
+            "metric_sources": annual_fundamentals.get("metric_sources", {}),
+            "metric_warnings": annual_fundamentals.get("metric_warnings", []),
             "price_history": price_history,
             "_profile_fallbacks": {
                 "company_name": b3_company.get("companyName") or cvm_general.get("Nome_Empresarial"),
                 "sector": cvm_general.get("Setor_Atividade"),
                 "segment": b3_company.get("segment") or cvm_general.get("Setor_Atividade"),
             },
-            "_sources": ["b3-listed-companies-api", "cvm-open-data", "statusinvest-api"],
+            "_sources": ["b3-listed-companies-api", "yfinance-fundamentals", "cvm-open-data", "statusinvest-api"],
         }
 
     def _build_annual_fundamentals(
@@ -92,23 +94,20 @@ class PublicDataAPI:
         sector: str | None,
         current_price: float | None,
         ticker: str,
-    ) -> dict[str, float | None]:
-        if code_cvm is None:
-            return {
-                "p_l": None,
-                "roe": None,
-                "net_debt_ebitda": None,
-                "net_margin": None,
-                "dividend_yield": self._fetch_dividend_yield(ticker, current_price),
-                "net_debt": None,
-                "ebitda": None,
-            }
+    ) -> dict[str, Any]:
+        yfinance_fundamentals = self._fetch_yfinance_fundamentals(ticker)
+        dre = pd.DataFrame()
+        bpa = pd.DataFrame()
+        bpp = pd.DataFrame()
+        dfc = pd.DataFrame()
+        total_shares = None
 
-        dre = self._load_best_statement_frame("DRE", code_cvm)
-        bpa = self._load_best_statement_frame("BPA", code_cvm)
-        bpp = self._load_best_statement_frame("BPP", code_cvm)
-        dfc = self._load_best_cash_flow_frame(code_cvm)
-        total_shares = self._fetch_total_shares(cnpj)
+        if code_cvm is not None:
+            dre = self._load_best_statement_frame("DRE", code_cvm)
+            bpa = self._load_best_statement_frame("BPA", code_cvm)
+            bpp = self._load_best_statement_frame("BPP", code_cvm)
+            dfc = self._load_best_cash_flow_frame(code_cvm)
+            total_shares = self._fetch_total_shares(cnpj)
 
         revenue = self._extract_first_value(dre, code="3.01")
         ebit = self._extract_ebit(dre, sector)
@@ -117,17 +116,196 @@ class PublicDataAPI:
         cash = self._extract_cash(bpa)
         debt = self._extract_debt(bpp, sector)
         depreciation = self._extract_depreciation_amortization(dfc)
-        ebitda = ebit + depreciation if ebit is not None and depreciation is not None else None
-        net_debt = debt - cash if debt is not None and cash is not None else None
+        cvm_ebitda = ebit + depreciation if ebit is not None and depreciation is not None else None
+        cvm_net_debt = debt - cash if debt is not None and cash is not None else None
+        is_bank_like = self._is_bank_like_sector(sector)
+        cvm_p_l = self._calculate_p_l(current_price=current_price, net_income=net_income, total_shares=total_shares)
+        cvm_roe = self._calculate_ratio(numerator=net_income, denominator=equity, as_percent=True)
+        cvm_net_margin = self._calculate_ratio(numerator=net_income, denominator=revenue, as_percent=True)
+        statusinvest_dividend_yield = self._fetch_dividend_yield(ticker, current_price)
+        cvm_net_debt_ebitda = self._calculate_ratio(
+            numerator=cvm_net_debt,
+            denominator=cvm_ebitda,
+            as_percent=False,
+        )
+
+        p_l, p_l_source = self._select_metric_source(
+            primary_value=yfinance_fundamentals.get("p_l"),
+            primary_source="Yahoo Finance API",
+            primary_detail="Direct trailing P/L returned by Yahoo Finance fundamentals.",
+            primary_status="direct",
+            fallback_value=cvm_p_l,
+            fallback_source="Fallback derived from Status Invest + CVM",
+            fallback_detail="Computed as current price divided by earnings per share, where EPS = CVM net income / CVM total shares.",
+            fallback_status="derived",
+            missing_source="Yahoo Finance API + fallback",
+            missing_detail="Yahoo Finance is queried first for P/L. If unavailable, the app falls back to the existing Status Invest and CVM-based calculation.",
+            missing_reason="Could not get P/L from Yahoo Finance and could not derive it from current price, net income, and total shares.",
+        )
+        roe, roe_source = self._select_metric_source(
+            primary_value=yfinance_fundamentals.get("roe"),
+            primary_source="Yahoo Finance API",
+            primary_detail="Direct return on equity returned by Yahoo Finance fundamentals.",
+            primary_status="direct",
+            fallback_value=cvm_roe,
+            fallback_source="Fallback derived from CVM",
+            fallback_detail="Computed as CVM net income divided by CVM equity.",
+            fallback_status="derived",
+            missing_source="Yahoo Finance API + fallback",
+            missing_detail="Yahoo Finance is queried first for ROE. If unavailable, the app falls back to the existing CVM-based calculation.",
+            missing_reason="Could not get ROE from Yahoo Finance and could not derive it because net income or equity was unavailable in the latest filings.",
+        )
+        net_margin, net_margin_source = self._select_metric_source(
+            primary_value=yfinance_fundamentals.get("net_margin"),
+            primary_source="Yahoo Finance API",
+            primary_detail="Direct net margin returned by Yahoo Finance fundamentals.",
+            primary_status="direct",
+            fallback_value=cvm_net_margin,
+            fallback_source="Fallback derived from CVM",
+            fallback_detail="Computed as CVM net income divided by CVM revenue.",
+            fallback_status="derived",
+            missing_source="Yahoo Finance API + fallback",
+            missing_detail="Yahoo Finance is queried first for Net Margin. If unavailable, the app falls back to the existing CVM-based calculation.",
+            missing_reason="Could not get Net Margin from Yahoo Finance and could not derive it because revenue or net income was unavailable in the latest filings.",
+        )
+        dividend_yield, dividend_yield_source = self._select_metric_source(
+            primary_value=yfinance_fundamentals.get("dividend_yield"),
+            primary_source="Yahoo Finance API",
+            primary_detail="Direct dividend yield returned by Yahoo Finance fundamentals.",
+            primary_status="direct",
+            fallback_value=statusinvest_dividend_yield,
+            fallback_source="Fallback derived from Status Invest",
+            fallback_detail="Computed as last-year provents per share divided by the current price.",
+            fallback_status="derived",
+            missing_source="Yahoo Finance API + fallback",
+            missing_detail="Yahoo Finance is queried first for Dividend Yield. If unavailable, the app falls back to the existing Status Invest-based calculation.",
+            missing_reason="Could not get Dividend Yield from Yahoo Finance and could not derive it because current price or the provents history was unavailable.",
+        )
+        net_debt, net_debt_source = self._select_metric_source(
+            primary_value=yfinance_fundamentals.get("net_debt"),
+            primary_source=yfinance_fundamentals.get("net_debt_source_label") or "Derived from Yahoo Finance",
+            primary_detail=yfinance_fundamentals.get("net_debt_detail")
+            or "Computed from Yahoo Finance total debt minus total cash because net debt was not directly returned.",
+            primary_status="direct"
+            if yfinance_fundamentals.get("net_debt_source_label") == "Yahoo Finance API"
+            else "derived",
+            fallback_value=cvm_net_debt,
+            fallback_source="Fallback derived from CVM",
+            fallback_detail="Computed as CVM financial debt minus cash and financial applications.",
+            fallback_status="derived",
+            missing_source="Yahoo Finance API + fallback",
+            missing_detail="Yahoo Finance is queried first for Net Debt. If unavailable, the app falls back to the existing CVM-based calculation.",
+            missing_reason=(
+                "Could not get Net Debt from Yahoo Finance and could not derive it because the public APIs did not provide comparable debt and cash inputs for this ticker."
+                if not is_bank_like
+                else "Could not get Net Debt from Yahoo Finance and could not derive a comparable value for this bank from the available public APIs."
+            ),
+        )
+        ebitda, ebitda_source = self._select_metric_source(
+            primary_value=yfinance_fundamentals.get("ebitda"),
+            primary_source="Yahoo Finance API",
+            primary_detail="Direct EBITDA returned by Yahoo Finance fundamentals.",
+            primary_status="direct",
+            fallback_value=cvm_ebitda,
+            fallback_source="Fallback derived from CVM",
+            fallback_detail="Computed as EBIT plus depreciation/amortization from CVM statements.",
+            fallback_status="derived",
+            missing_source="Yahoo Finance API + fallback",
+            missing_detail="Yahoo Finance is queried first for EBITDA. If unavailable, the app falls back to the existing CVM-based calculation.",
+            missing_reason=(
+                "Could not get EBITDA from Yahoo Finance and could not derive it because EBIT or depreciation/amortization was unavailable in the latest filings."
+                if not is_bank_like
+                else "Could not get EBITDA from Yahoo Finance and could not derive a comparable value for this bank from the available public APIs."
+            ),
+        )
+        net_debt_ebitda, net_debt_ebitda_source = self._select_metric_source(
+            primary_value=yfinance_fundamentals.get("net_debt_ebitda"),
+            primary_source="Derived from Yahoo Finance",
+            primary_detail="Computed as Yahoo Finance net debt divided by Yahoo Finance EBITDA.",
+            primary_status="derived",
+            fallback_value=cvm_net_debt_ebitda,
+            fallback_source="Fallback derived from CVM",
+            fallback_detail="Computed as derived Net Debt divided by derived EBITDA using CVM statements.",
+            fallback_status="derived",
+            missing_source="Yahoo Finance API + fallback",
+            missing_detail="Yahoo Finance is queried first for the inputs needed to derive Net Debt / EBITDA. If unavailable, the app falls back to the existing CVM-based calculation.",
+            missing_reason=(
+                "Could not get or derive Net Debt / EBITDA from Yahoo Finance and the CVM fallback also did not have the required inputs."
+                if not is_bank_like
+                else "Could not get or derive a comparable Net Debt / EBITDA value for this bank from Yahoo Finance or the available public APIs."
+            ),
+        )
+
+        metric_sources = {
+            "current_price": self._make_metric_source(
+                value=current_price,
+                source="Status Invest API",
+                detail="Latest available quote from the Status Invest price endpoint.",
+                missing_reason="Could not read the latest quote from the available public APIs.",
+                status="direct",
+            ),
+            "p_l": p_l_source,
+            "roe": roe_source,
+            "net_debt": net_debt_source,
+            "ebitda": ebitda_source,
+            "net_debt_ebitda": net_debt_ebitda_source,
+            "net_margin": net_margin_source,
+            "dividend_yield": dividend_yield_source,
+        }
 
         return {
-            "p_l": self._calculate_p_l(current_price=current_price, net_income=net_income, total_shares=total_shares),
-            "roe": self._calculate_ratio(numerator=net_income, denominator=equity, as_percent=True),
-            "net_margin": self._calculate_ratio(numerator=net_income, denominator=revenue, as_percent=True),
-            "dividend_yield": self._fetch_dividend_yield(ticker, current_price),
+            "p_l": p_l,
+            "roe": roe,
+            "net_margin": net_margin,
+            "dividend_yield": dividend_yield,
             "net_debt": net_debt,
             "ebitda": ebitda,
-            "net_debt_ebitda": self._calculate_ratio(numerator=net_debt, denominator=ebitda, as_percent=False),
+            "net_debt_ebitda": net_debt_ebitda,
+            "metric_sources": metric_sources,
+            "metric_warnings": self._build_metric_warnings(metric_sources),
+        }
+
+    def _fetch_yfinance_fundamentals(self, ticker: str) -> dict[str, Any]:
+        try:
+            import yfinance as yf
+        except Exception:
+            return {}
+
+        try:
+            info = yf.Ticker(f"{ticker.upper()}.SA").get_info()
+        except Exception:
+            return {}
+
+        if not isinstance(info, dict):
+            return {}
+
+        ebitda = self._safe_float(info.get("ebitda"))
+        direct_net_debt = self._safe_float(info.get("netDebt"))
+        total_debt = self._safe_float(info.get("totalDebt"))
+        total_cash = self._safe_float(info.get("totalCash"))
+
+        net_debt = direct_net_debt
+        net_debt_source_label = "Yahoo Finance API" if direct_net_debt is not None else None
+        net_debt_detail = "Direct net debt returned by Yahoo Finance fundamentals." if direct_net_debt is not None else None
+        if net_debt is None and total_debt is not None and total_cash is not None:
+            net_debt = total_debt - total_cash
+            net_debt_source_label = "Derived from Yahoo Finance"
+            net_debt_detail = "Computed as Yahoo Finance total debt minus Yahoo Finance total cash."
+
+        net_debt_ebitda = None
+        if net_debt is not None and ebitda not in (None, 0):
+            net_debt_ebitda = float(net_debt) / float(ebitda)
+
+        return {
+            "p_l": self._safe_float(info.get("trailingPE")),
+            "roe": self._decimal_ratio_to_percent(info.get("returnOnEquity")),
+            "net_margin": self._decimal_ratio_to_percent(info.get("profitMargins")),
+            "dividend_yield": self._decimal_ratio_to_percent(info.get("dividendYield")),
+            "ebitda": ebitda,
+            "net_debt": net_debt,
+            "net_debt_ebitda": net_debt_ebitda,
+            "net_debt_source_label": net_debt_source_label,
+            "net_debt_detail": net_debt_detail,
         }
 
     def _fetch_b3_company(self, ticker: str) -> dict[str, Any]:
@@ -428,6 +606,83 @@ class PublicDataAPI:
             return None
         ratio = float(numerator) / float(denominator)
         return ratio * 100 if as_percent else ratio
+
+    def _decimal_ratio_to_percent(self, value: Any) -> float | None:
+        parsed = self._safe_float(value)
+        if parsed is None:
+            return None
+        return parsed * 100
+
+    def _select_metric_source(
+        self,
+        primary_value: float | None,
+        primary_source: str,
+        primary_detail: str,
+        primary_status: str,
+        fallback_value: float | None,
+        fallback_source: str,
+        fallback_detail: str,
+        fallback_status: str,
+        missing_source: str,
+        missing_detail: str,
+        missing_reason: str,
+    ) -> tuple[float | None, dict[str, Any]]:
+        if primary_value is not None:
+            return primary_value, self._make_metric_source(
+                value=primary_value,
+                source=primary_source,
+                detail=primary_detail,
+                missing_reason=missing_reason,
+                status=primary_status,
+            )
+        if fallback_value is not None:
+            return fallback_value, self._make_metric_source(
+                value=fallback_value,
+                source=fallback_source,
+                detail=fallback_detail,
+                missing_reason=missing_reason,
+                status=fallback_status,
+            )
+        return None, self._make_metric_source(
+            value=None,
+            source=missing_source,
+            detail=missing_detail,
+            missing_reason=missing_reason,
+            status="missing",
+        )
+
+    def _make_metric_source(
+        self,
+        value: float | None,
+        source: str,
+        detail: str,
+        missing_reason: str,
+        status: str | None = None,
+    ) -> dict[str, Any]:
+        resolved_status = status or ("missing" if value is None else ("derived" if "derive" in source.lower() else "direct"))
+        return {
+            "status": resolved_status,
+            "source": source,
+            "detail": detail,
+            "missing_reason": missing_reason if value is None else None,
+        }
+
+    def _build_metric_warnings(self, metric_sources: dict[str, dict[str, Any]]) -> list[str]:
+        labels = {
+            "current_price": "Current price",
+            "p_l": "P/L",
+            "roe": "ROE",
+            "net_debt_ebitda": "Net Debt / EBITDA",
+            "net_margin": "Net Margin",
+            "dividend_yield": "Dividend Yield",
+        }
+        warnings: list[str] = []
+        for field, label in labels.items():
+            metadata = metric_sources.get(field) or {}
+            reason = metadata.get("missing_reason")
+            if reason:
+                warnings.append(f"{label}: {reason}")
+        return warnings
 
     def _scale_statement_value(self, row: pd.Series) -> float | None:
         value = self._safe_float(row.get("VL_CONTA"))

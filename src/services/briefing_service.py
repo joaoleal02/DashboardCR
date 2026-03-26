@@ -6,7 +6,7 @@ from typing import Any
 from src.collectors.company_data import CompanyDataCollector
 from src.collectors.market_data import MarketDataCollector
 from src.collectors.news_data import NewsDataCollector
-from src.llm.client import LLMClient
+from src.llm.client import LLMClient, LLMGenerationError
 from src.llm.schemas import LLMReport
 
 
@@ -67,6 +67,9 @@ class BriefingService:
 
         try:
             llm_report, llm_raw_response = self.llm_client.generate_report(raw_payload)
+        except LLMGenerationError as exc:
+            llm_error = str(exc)
+            llm_raw_response = exc.raw_response
         except Exception as exc:
             llm_error = str(exc)
 

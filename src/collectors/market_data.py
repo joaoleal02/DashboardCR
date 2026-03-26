@@ -24,6 +24,8 @@ class MarketDataCollector:
                 "dividend_yield": None,
                 "net_debt": None,
                 "ebitda": None,
+                "metric_sources": {},
+                "metric_warnings": [],
                 "price_history": [],
                 "_profile_fallbacks": {},
                 "_sources": [],

@@ -13,20 +13,19 @@ from src.utils.formatting import (
     format_metric_value,
     normalize_title_key,
     safe_text,
-    to_pretty_json,
 )
 from src.utils.validation import normalize_ticker, validate_ticker
 
 
 st.set_page_config(
-    page_title="Monday Morning Equity Briefing",
+    page_title="Equity Research Briefing",
     page_icon=":bar_chart:",
     layout="centered",
 )
 
 
 def render_overview(profile: dict[str, object], ticker: str) -> None:
-    st.subheader("1. Company overview")
+    st.subheader("Company profile")
     left, right = st.columns(2)
     left.markdown(f"**Ticker**  \n{ticker}")
     left.markdown(f"**Company name**  \n{safe_text(profile.get('company_name'))}")
@@ -37,7 +36,7 @@ def render_overview(profile: dict[str, object], ticker: str) -> None:
 
 
 def render_market_data(market_data: dict[str, object]) -> None:
-    st.subheader("2. Market and fundamentals")
+    st.subheader("Market snapshot and fundamentals")
     metrics = [
         ("Current price", "current_price"),
         ("P/L", "p_l"),
@@ -46,12 +45,25 @@ def render_market_data(market_data: dict[str, object]) -> None:
         ("Net Margin", "net_margin"),
         ("Dividend Yield", "dividend_yield"),
     ]
+    metric_sources = market_data.get("metric_sources") or {}
+    metric_warnings = market_data.get("metric_warnings") or []
     col_a, col_b, col_c = st.columns(3)
     cols = [col_a, col_b, col_c]
     for index, (label, field) in enumerate(metrics):
         column = cols[index % 3]
         with column:
             st.metric(label=label, value=format_metric_value(field, market_data.get(field)))
+            source_info = metric_sources.get(field) or {}
+            source = source_info.get("source")
+            detail = source_info.get("detail")
+            if source and detail:
+                st.caption(f"{source} | {detail}")
+            elif source:
+                st.caption(source)
+
+    if metric_warnings:
+        warning_lines = "\n".join(f"- {warning}" for warning in metric_warnings)
+        st.warning(f"Could not find or derive some fundamentals:\n{warning_lines}")
 
 
 def render_returns_chart(price_history: list[dict[str, object]], ticker: str) -> None:
@@ -130,7 +142,7 @@ def filter_price_history(history_frame: pd.DataFrame, window: str) -> pd.DataFra
 
 
 def render_news(news_items: list[dict[str, object]], llm_report: object | None) -> None:
-    st.subheader("3. Recent news")
+    st.subheader("Recent news and impact")
     if not news_items:
         st.info("No recent news was found from the available public sources. The briefing below uses company and market data only.")
         return
@@ -158,7 +170,7 @@ def render_news(news_items: list[dict[str, object]], llm_report: object | None) 
 
 
 def render_llm_report(llm_report: object | None, llm_error: str | None) -> None:
-    st.subheader("4. LLM report")
+    st.subheader("Analyst briefing")
     if llm_report is None:
         st.warning(llm_error or "The LLM analysis could not be generated.")
         return
@@ -180,26 +192,17 @@ def render_llm_report(llm_report: object | None, llm_error: str | None) -> None:
 def main() -> None:
     service = BriefingService()
 
-    st.title("Monday Morning Equity Briefing")
+    st.title("Equity Research Briefing")
     st.write(
-        "A Phase 1 Streamlit prototype for generating a compact equity research briefing from public data plus an LLM synthesis."
+        "Phase 1 dashboard for generating a compact equity research briefing from public data and an LLM synthesis."
     )
 
     with st.form("briefing-form"):
-        selector_col, input_col = st.columns([1, 1])
-        with selector_col:
-            selected_ticker = st.selectbox("Choose an allowed ticker", options=ALLOWED_TICKERS, index=0)
-        with input_col:
-            typed_ticker = st.text_input(
-                "Or type a ticker",
-                placeholder="Example: ITUB4",
-                help="Phase 1 only supports the 10 tickers listed in the case study.",
-            )
+        selected_ticker = st.selectbox("Choose a ticker", options=ALLOWED_TICKERS, index=0)
         submitted = st.form_submit_button("Generate briefing", use_container_width=True)
 
     if submitted:
-        raw_choice = typed_ticker or selected_ticker
-        normalized = normalize_ticker(raw_choice)
+        normalized = normalize_ticker(selected_ticker)
         is_valid, error_message = validate_ticker(normalized)
         if not is_valid:
             st.error(error_message)
@@ -211,7 +214,7 @@ def main() -> None:
 
     result = st.session_state.get("briefing_result")
     if not result:
-        st.caption("Choose one of the allowed B3 tickers and click Generate briefing.")
+        st.caption("Choose one of the allowed Phase 1 tickers and click Generate briefing.")
         return
 
     render_overview(result.company_profile, result.ticker)
@@ -220,16 +223,14 @@ def main() -> None:
     render_news(result.news, result.llm_report)
     render_llm_report(result.llm_report, result.llm_error)
 
-    with st.expander("5. Raw collected data"):
-        st.code(to_pretty_json(result.raw_payload), language="json")
-
-    with st.expander("Debug information"):
-        st.code(to_pretty_json(result.debug_info), language="json")
-
     if result.llm_error:
         st.info(
-            "The app still returned the collected raw data because the LLM step is intentionally best-effort in Phase 1."
+            "The company, market, and news sections still rendered even though the LLM step failed."
         )
+        raw_response = result.debug_info.get("llm_raw_response")
+        if raw_response:
+            with st.expander("LLM failure details"):
+                st.code(raw_response, language="json")
 
 
 if __name__ == "__main__":
