@@ -6,7 +6,6 @@ import pandas as pd
 import streamlit as st
 
 from src.services.briefing_service import BriefingService
-from src.ticker_universe import ALLOWED_TICKERS
 from src.utils.formatting import (
     compact_date,
     escape_streamlit_text,
@@ -18,7 +17,7 @@ from src.utils.validation import normalize_ticker, validate_ticker
 
 
 st.set_page_config(
-    page_title="Equity Research Briefing",
+    page_title="Equity Research Pipeline",
     page_icon=":bar_chart:",
     layout="centered",
 )
@@ -189,32 +188,64 @@ def render_llm_report(llm_report: object | None, llm_error: str | None) -> None:
         st.markdown(f"- {escape_streamlit_text(question)}")
 
 
+def render_run_summary(result: object) -> None:
+    st.subheader("Pipeline run")
+    left, right, third = st.columns(3)
+    left.metric("Run ID", getattr(result, "run_id", "Unavailable"))
+    right.metric("Run status", safe_text(getattr(result, "run_status", None)))
+    third.metric("LLM status", safe_text(getattr(result, "llm_status", None)))
+
+
+def render_pipeline_errors(error_events: list[dict[str, object]]) -> None:
+    if not error_events:
+        return
+    st.warning("This run completed with handled issues.")
+    for event in error_events:
+        stage = safe_text(event.get("stage"))
+        error_type = safe_text(event.get("error_type"))
+        message = safe_text(event.get("message"))
+        details = event.get("details")
+        st.caption(f"{stage} | {error_type} | {message}")
+        if details and len(str(details)) <= 200:
+            st.caption(safe_text(details))
+
+
 def main() -> None:
     service = BriefingService()
 
-    st.title("Equity Research Briefing")
+    st.title("Equity Research Pipeline Dashboard")
     st.write(
-        "Phase 1 dashboard for generating a compact equity research briefing from public data and an LLM synthesis."
+        "Phase 2 dashboard for running the pipeline, storing each execution in SQLite, and reviewing the latest generated briefing."
     )
+    st.caption("Each run writes company, market, news, LLM, and error events to the local pipeline database.")
 
     with st.form("briefing-form"):
-        selected_ticker = st.selectbox("Choose a ticker", options=ALLOWED_TICKERS, index=0)
-        submitted = st.form_submit_button("Generate briefing", use_container_width=True)
+        entered_ticker = st.text_input("B3 ticker", placeholder="Examples: PETR4, VALE3, ITUB4")
+        submitted = st.form_submit_button("Run pipeline", use_container_width=True)
 
     if submitted:
-        normalized = normalize_ticker(selected_ticker)
+        normalized = normalize_ticker(entered_ticker)
         is_valid, error_message = validate_ticker(normalized)
         if not is_valid:
             st.error(error_message)
             return
 
-        with st.spinner(f"Collecting data and generating the briefing for {normalized}..."):
+        with st.spinner(f"Running the pipeline for {normalized}..."):
             result = service.generate_briefing(normalized)
         st.session_state["briefing_result"] = result
 
     result = st.session_state.get("briefing_result")
     if not result:
-        st.caption("Choose one of the allowed Phase 1 tickers and click Generate briefing.")
+        st.caption("Enter any B3 ticker and click Run pipeline to generate and store a briefing.")
+        return
+
+    render_run_summary(result)
+    render_pipeline_errors(getattr(result, "error_events", []))
+    if result.run_status == "failed_invalid_ticker":
+        st.error("Ticker was not found in B3. It may be invalid or delisted.")
+        return
+    if result.run_status == "failed_source_unavailable":
+        st.error("The required sources were unavailable for this run, so the pipeline could not build a usable briefing.")
         return
 
     render_overview(result.company_profile, result.ticker)

@@ -12,21 +12,4 @@ class MarketDataCollector:
         self.public_api = get_public_data_api()
 
     def collect(self, ticker: str) -> dict[str, Any]:
-        try:
-            return self.public_api.get_market_data(ticker)
-        except Exception:
-            return {
-                "current_price": None,
-                "p_l": None,
-                "roe": None,
-                "net_debt_ebitda": None,
-                "net_margin": None,
-                "dividend_yield": None,
-                "net_debt": None,
-                "ebitda": None,
-                "metric_sources": {},
-                "metric_warnings": [],
-                "price_history": [],
-                "_profile_fallbacks": {},
-                "_sources": [],
-            }
+        return self.public_api.get_market_data(ticker)

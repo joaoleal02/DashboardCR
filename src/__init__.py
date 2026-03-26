@@ -1,1 +1,1 @@
-"""Phase 1 equity briefing prototype."""
+"""Equity research pipeline package."""

@@ -14,6 +14,7 @@ import pandas as pd
 import requests
 
 from src.config import get_settings
+from src.errors import InvalidTickerError, SourceUnavailableError
 
 
 SCALE_MULTIPLIERS = {
@@ -39,7 +40,10 @@ class PublicDataAPI:
         b3_company = self._fetch_b3_company(ticker)
         code_cvm = self._safe_int(b3_company.get("codeCVM"))
         cnpj = self._digits_only(b3_company.get("cnpj"))
-        cvm_general = self._fetch_latest_cvm_general(code_cvm=code_cvm, cnpj=cnpj)
+        try:
+            cvm_general = self._fetch_latest_cvm_general(code_cvm=code_cvm, cnpj=cnpj)
+        except SourceUnavailableError:
+            cvm_general = {}
 
         return {
             "company_name": b3_company.get("companyName") or cvm_general.get("Nome_Empresarial"),
@@ -55,10 +59,17 @@ class PublicDataAPI:
         b3_company = self._fetch_b3_company(ticker)
         code_cvm = self._safe_int(b3_company.get("codeCVM"))
         cnpj = self._digits_only(b3_company.get("cnpj"))
-        cvm_general = self._fetch_latest_cvm_general(code_cvm=code_cvm, cnpj=cnpj)
+        try:
+            cvm_general = self._fetch_latest_cvm_general(code_cvm=code_cvm, cnpj=cnpj)
+        except SourceUnavailableError:
+            cvm_general = {}
 
-        price_history = self._fetch_statusinvest_price_history(ticker)
-        current_price = self._fetch_current_price(ticker, price_history)
+        try:
+            price_history = self._fetch_statusinvest_price_history(ticker)
+            current_price = self._fetch_current_price(ticker, price_history)
+        except SourceUnavailableError:
+            price_history = []
+            current_price = None
         annual_fundamentals = self._build_annual_fundamentals(
             code_cvm=code_cvm,
             cnpj=cnpj,
@@ -84,6 +95,8 @@ class PublicDataAPI:
                 "sector": cvm_general.get("Setor_Atividade"),
                 "segment": b3_company.get("segment") or cvm_general.get("Setor_Atividade"),
             },
+            "_code_cvm": code_cvm,
+            "_cnpj": cnpj,
             "_sources": ["b3-listed-companies-api", "yfinance-fundamentals", "cvm-open-data", "statusinvest-api"],
         }
 
@@ -103,11 +116,18 @@ class PublicDataAPI:
         total_shares = None
 
         if code_cvm is not None:
-            dre = self._load_best_statement_frame("DRE", code_cvm)
-            bpa = self._load_best_statement_frame("BPA", code_cvm)
-            bpp = self._load_best_statement_frame("BPP", code_cvm)
-            dfc = self._load_best_cash_flow_frame(code_cvm)
-            total_shares = self._fetch_total_shares(cnpj)
+            try:
+                dre = self._load_best_statement_frame("DRE", code_cvm)
+                bpa = self._load_best_statement_frame("BPA", code_cvm)
+                bpp = self._load_best_statement_frame("BPP", code_cvm)
+                dfc = self._load_best_cash_flow_frame(code_cvm)
+                total_shares = self._fetch_total_shares(cnpj)
+            except SourceUnavailableError:
+                dre = pd.DataFrame()
+                bpa = pd.DataFrame()
+                bpp = pd.DataFrame()
+                dfc = pd.DataFrame()
+                total_shares = None
 
         revenue = self._extract_first_value(dre, code="3.01")
         ebit = self._extract_ebit(dre, sector)
@@ -122,7 +142,10 @@ class PublicDataAPI:
         cvm_p_l = self._calculate_p_l(current_price=current_price, net_income=net_income, total_shares=total_shares)
         cvm_roe = self._calculate_ratio(numerator=net_income, denominator=equity, as_percent=True)
         cvm_net_margin = self._calculate_ratio(numerator=net_income, denominator=revenue, as_percent=True)
-        statusinvest_dividend_yield = self._fetch_dividend_yield(ticker, current_price)
+        try:
+            statusinvest_dividend_yield = self._fetch_dividend_yield(ticker, current_price)
+        except SourceUnavailableError:
+            statusinvest_dividend_yield = None
         cvm_net_debt_ebitda = self._calculate_ratio(
             numerator=cvm_net_debt,
             denominator=cvm_ebitda,
@@ -300,7 +323,7 @@ class PublicDataAPI:
             "p_l": self._safe_float(info.get("trailingPE")),
             "roe": self._decimal_ratio_to_percent(info.get("returnOnEquity")),
             "net_margin": self._decimal_ratio_to_percent(info.get("profitMargins")),
-            "dividend_yield": self._decimal_ratio_to_percent(info.get("dividendYield")),
+            "dividend_yield": self._yfinance_dividend_yield_to_percent(info.get("dividendYield")),
             "ebitda": ebitda,
             "net_debt": net_debt,
             "net_debt_ebitda": net_debt_ebitda,
@@ -319,7 +342,12 @@ class PublicDataAPI:
         url = self.settings.b3_listed_companies_url.format(payload=encoded_payload)
         data = self._request_json(url)
         results = data.get("results") or []
-        return results[0] if results else {}
+        if not results:
+            raise InvalidTickerError(ticker)
+        best_result = results[0]
+        if str(best_result.get("status") or "").upper() not in {"A", "ATIVO", "ACTIVE"}:
+            raise InvalidTickerError(ticker, f"{ticker} was found in B3 search results but is not currently listed as active.")
+        return best_result
 
     def _fetch_latest_cvm_general(self, code_cvm: int | None, cnpj: str | None) -> dict[str, Any]:
         for year in self._candidate_years():
@@ -613,6 +641,14 @@ class PublicDataAPI:
             return None
         return parsed * 100
 
+    def _yfinance_dividend_yield_to_percent(self, value: Any) -> float | None:
+        parsed = self._safe_float(value)
+        if parsed is None:
+            return None
+        if 0 <= parsed <= 1:
+            return parsed * 100
+        return parsed
+
     def _select_metric_source(
         self,
         primary_value: float | None,
@@ -766,6 +802,14 @@ class PublicDataAPI:
                         usecols=list(usecols),
                         low_memory=False,
                     )
+        except requests.RequestException as exc:
+            raise SourceUnavailableError(
+                source="cvm-open-data",
+                message="CVM open data could not be reached for this run.",
+                details=str(exc),
+            ) from exc
+        except (KeyError, FileNotFoundError, zipfile.BadZipFile, pd.errors.EmptyDataError):
+            return pd.DataFrame()
         except Exception:
             return pd.DataFrame()
 
@@ -776,14 +820,26 @@ class PublicDataAPI:
     @lru_cache(maxsize=128)
     def _cached_request_json(self, url: str, params_json: str) -> Any:
         params = json.loads(params_json)
-        response = requests.get(
-            url,
-            params=params,
-            headers={"User-Agent": "Mozilla/5.0", "X-Requested-With": "XMLHttpRequest"},
-            timeout=self.settings.request_timeout,
-        )
-        response.raise_for_status()
-        return response.json()
+        try:
+            response = requests.get(
+                url,
+                params=params,
+                headers={"User-Agent": "Mozilla/5.0", "X-Requested-With": "XMLHttpRequest"},
+                timeout=self.settings.request_timeout,
+            )
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as exc:
+            source = "public-api"
+            if "statusinvest" in url:
+                source = "status-invest"
+            elif "sistemaswebb3" in url or "listedCompaniesProxy" in url:
+                source = "b3-listed-companies"
+            raise SourceUnavailableError(
+                source=source,
+                message=f"{source} could not be reached for this run.",
+                details=str(exc),
+            ) from exc
 
     def _candidate_years(self) -> list[int]:
         current_year = date.today().year

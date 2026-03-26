@@ -1,0 +1,1 @@
+"""Structured recurring pipeline entrypoints."""

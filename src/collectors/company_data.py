@@ -12,13 +12,4 @@ class CompanyDataCollector:
         self.public_api = get_public_data_api()
 
     def collect(self, ticker: str) -> dict[str, Any]:
-        try:
-            return self.public_api.get_company_profile(ticker)
-        except Exception:
-            return {
-                "company_name": None,
-                "sector": None,
-                "segment": None,
-                "business_description": None,
-                "_sources": [],
-            }
+        return self.public_api.get_company_profile(ticker)

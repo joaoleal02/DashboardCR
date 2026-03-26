@@ -3,8 +3,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from openai import OpenAI
-
 from src.config import get_settings
 from src.llm.prompts import SYSTEM_PROMPT, build_user_prompt
 from src.llm.schemas import LLMReport
@@ -21,18 +19,27 @@ class LLMClient:
 
     def __init__(self) -> None:
         self.settings = get_settings()
-        self._client: OpenAI | None = None
+        self._client: Any | None = None
+        self._client_error: str | None = None
         if self.settings.openai_api_key:
-            self._client = OpenAI(
-                api_key=self.settings.openai_api_key,
-                base_url=self.settings.openai_base_url,
-            )
+            try:
+                from openai import OpenAI
+            except ModuleNotFoundError:
+                self._client = None
+                self._client_error = "The `openai` package is not installed. Run `pip install -r requirements.txt`."
+            else:
+                self._client = OpenAI(
+                    api_key=self.settings.openai_api_key,
+                    base_url=self.settings.openai_base_url,
+                )
 
     def is_configured(self) -> bool:
         return self._client is not None
 
     def generate_report(self, payload: dict[str, Any]) -> tuple[LLMReport, str]:
         if self._client is None:
+            if self._client_error:
+                raise RuntimeError(self._client_error)
             raise RuntimeError("OPENAI_API_KEY is not configured. Add it to your .env file to enable the LLM report.")
 
         messages = [

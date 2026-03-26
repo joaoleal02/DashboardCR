@@ -1,1 +1,1 @@
-"""Data collectors for Phase 1."""
+"""Data collectors for market, company, and news inputs."""

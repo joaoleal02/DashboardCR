@@ -7,7 +7,7 @@ from src.utils.formatting import format_metric_value, safe_text
 
 
 SYSTEM_PROMPT = """
-You are a buy-side equity research assistant preparing a concise Monday morning briefing.
+You are a buy-side equity research assistant preparing a concise equity research briefing.
 
 Follow these rules:
 - Think like a value-oriented analyst.
@@ -73,7 +73,7 @@ def build_user_prompt(payload: dict[str, Any]) -> str:
     }
 
     return (
-        "Prepare a concise Phase 1 research briefing for the following company. "
+        "Prepare a concise equity research briefing for the following company. "
         "Use only the facts in the payload below, and keep inference grounded.\n\n"
         f"{json.dumps(formatted_payload, ensure_ascii=False, indent=2)}"
     )

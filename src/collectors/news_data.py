@@ -8,6 +8,7 @@ from xml.etree import ElementTree
 import requests
 
 from src.config import get_settings
+from src.errors import SourceUnavailableError
 
 
 class NewsDataCollector:
@@ -30,7 +31,13 @@ class NewsDataCollector:
             )
             response.raise_for_status()
             root = ElementTree.fromstring(response.content)
-        except Exception:
+        except requests.RequestException as exc:
+            raise SourceUnavailableError(
+                source="google-news-rss",
+                message="Google News RSS could not be reached for this run.",
+                details=str(exc),
+            ) from exc
+        except ElementTree.ParseError:
             return []
 
         items: list[dict[str, Any]] = []
